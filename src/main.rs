@@ -34,30 +34,32 @@ fn make_multiplexer<F: RichField + Extendable<D>, const D: usize>(
     builder: &mut CircuitBuilder<F, D>
 ) -> MultiplexerTarget {
     let selector = builder.add_virtual_bool_target_safe();
-    let input0 = [builder.add_virtual_bool_target_safe(); 256];
-    let input1 = [builder.add_virtual_bool_target_safe(); 256];
+    let mut input0 = Vec::new();
+    let mut input1 = Vec::new();
     let mut output0_vec = Vec::new();
     let mut output1_vec = Vec::new();
     builder.register_public_input(selector.target);
-    for (a,b) in zip(input0, input1) {
-        builder.register_public_input(a.target);
-        builder.register_public_input(b.target);
-        let nots = builder.not(selector);
-        let nots_and_a = builder.and(nots, a);
-        let s_and_b = builder.and(selector, b);
+    let nots = builder.not(selector);
+    for i in 0..256 {
+        let i0 = builder.add_virtual_bool_target_safe();
+        let i1 = builder.add_virtual_bool_target_safe();
+        builder.register_public_input(i0.target);
+        builder.register_public_input(i1.target);
+        let nots_and_a = builder.and(nots, i0);
+        let s_and_b = builder.and(selector, i1);
         let out0 = builder.or(nots_and_a, s_and_b);
-        builder.register_public_input(out0.target);
-        output0_vec.push(out0);
-        let s_and_a = builder.and(selector, a);
-        let nots_and_b = builder.and(nots, b);
+        let s_and_a = builder.and(selector, i0);
+        let nots_and_b = builder.and(nots, i1);
         let out1 = builder.or(s_and_a, nots_and_b);
-        builder.register_public_input(out1.target);
+        output0_vec.push(out0);
         output1_vec.push(out1);
+        input0.push(i0);
+        input1.push(i1);
     }
     MultiplexerTarget { 
         selector: selector,
-        input0: input0,
-        input1: input1,
+        input0: input0.try_into().unwrap(),
+        input1: input1.try_into().unwrap(),
         output0: output0_vec.try_into().unwrap(),
         output1: output1_vec.try_into().unwrap(),
     }
@@ -74,7 +76,7 @@ fn fill_circuits<F: RichField + Extendable<D>, const D: usize>(
     let i1 = array_to_bits(&input1);
     let o0: Vec<bool>;
     let o1: Vec<bool>;
-    if selector {
+    if !selector {
         o0=i0.clone();
         o1=i1.clone();
     }
@@ -102,7 +104,14 @@ fn main()  {
     let input1: [u8; 32] = [1; 32];
     fill_circuits::<F, D>(&mut pw, input0, input1, false, targets);
     println!(
-        "Constructing inner proof with {} gates",
+        "Constructing proof with {} gates",
         builder.num_gates()
     );
+    let data = builder.build::<C>();
+    println!("Proving...");
+    let proof = data.prove(pw).unwrap();
+    println!("Done proving!");
+    println!("Verifying proof...");
+    data.verify(proof.clone()).expect("verify error");
+    println!("Done verifying!");
 }
