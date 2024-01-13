@@ -84,3 +84,34 @@ pub fn fill_circuits<F: RichField + Extendable<D>, const D: usize>(
         pw.set_bool_target(targets.output1[i], o1[i]);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::dualmux;
+    use plonky2::{plonk::{config::{PoseidonGoldilocksConfig, GenericConfig}, circuit_builder::CircuitBuilder, circuit_data::CircuitConfig}, iop::witness::PartialWitness};
+
+    #[test]
+    fn test_mux() {
+        const D: usize = 2;
+        type C = PoseidonGoldilocksConfig;
+        type F = <C as GenericConfig<D>>::F;
+        let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
+        let targets = dualmux::make_multiplexer(&mut builder);
+        let mut pw = PartialWitness::new();
+        let input0: [u8; 32] = [0; 32];
+        let input1: [u8; 32] = [1; 32];
+        dualmux::fill_circuits::<F, D>(&mut pw, input0, input1, false, targets);
+        println!(
+            "Constructing proof with {} gates",
+            builder.num_gates()
+        );
+        let data = builder.build::<C>();
+        println!("Proving...");
+        let proof = data.prove(pw).unwrap();
+        println!("Done proving!");
+        println!("Verifying proof...");
+        data.verify(proof.clone()).expect("verify error");
+        println!("Done verifying!");
+
+    }
+}

@@ -9,29 +9,54 @@ use plonky2::plonk::circuit_data::{
     CircuitConfig, CommonCircuitData, VerifierCircuitTarget, VerifierOnlyCircuitData,
 };
 use plonky2::plonk::config::{AlgebraicHasher, GenericConfig, Hasher, PoseidonGoldilocksConfig};
+use plonky2_sha256;
 
 mod dualmux;
+pub struct DualHashTarget {
+    input0: [BoolTarget; 256],
+    input1: [BoolTarget; 256],
+    selector: BoolTarget,
+    output: [BoolTarget; 256],
+}
 
+pub fn make_dualhash<F: RichField + Extendable<D>, const D: usize>(
+    builder: &mut CircuitBuilder<F, D>
+) -> DualHashTarget {
+    let mut input0 = Vec::new();
+    let mut input1 = Vec::new();
+    let mut output0 = Vec::new();
+    let selector = builder.add_virtual_bool_target_safe();
+    for _ in 0..256 {
+        let i0 = builder.add_virtual_bool_target_safe();
+        let i1 = builder.add_virtual_bool_target_safe();
+        let o0 = builder.add_virtual_bool_target_safe();
+        input0.push(i0);
+        input1.push(i1);
+        output0.push(o0);
+    }
+    let mux = dualmux::make_multiplexer(builder);
+
+    for i in 0..256 {
+        builder.connect(input0[i].target, mux.input0[i].target);
+        builder.connect(input1[i].target, mux.input1[i].target);
+    }
+    builder.connect(selector.target, mux.selector.target);
+
+    let hasher = plonky2_sha256::circuit::make_circuits(builder, 512);
+    for i in 0..256 {
+        builder.connect(mux.output0[i].target, hasher.message[i].target);
+    }
+    for i in 0..256 {
+        builder.connect(mux.output1[i].target, hasher.message[255+i].target);
+    }
+
+    DualHashTarget { 
+        input0: input0.try_into().unwrap(), 
+        input1: input1.try_into().unwrap(), 
+        selector: selector, 
+        output: hasher.digest.try_into().unwrap()
+    }
+}
 
 fn main()  {
-    const D: usize = 2;
-    type C = PoseidonGoldilocksConfig;
-    type F = <C as GenericConfig<D>>::F;
-    let mut builder = CircuitBuilder::<F, D>::new(CircuitConfig::standard_recursion_config());
-    let targets = dualmux::make_multiplexer(&mut builder);
-    let mut pw = PartialWitness::new();
-    let input0: [u8; 32] = [0; 32];
-    let input1: [u8; 32] = [1; 32];
-    dualmux::fill_circuits::<F, D>(&mut pw, input0, input1, false, targets);
-    println!(
-        "Constructing proof with {} gates",
-        builder.num_gates()
-    );
-    let data = builder.build::<C>();
-    println!("Proving...");
-    let proof = data.prove(pw).unwrap();
-    println!("Done proving!");
-    println!("Verifying proof...");
-    data.verify(proof.clone()).expect("verify error");
-    println!("Done verifying!");
 }
